@@ -22,7 +22,7 @@ function getObfuscatedApiKey() {
     ];
     
     $key = $fragments['q'] . $fragments['w'] . $fragments['e'];
-    return $key; // neo2205
+    return $key; 
 }
 
 if (!isset($_GET['api']) || $_GET['api'] !== getObfuscatedApiKey()) {
